@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Chess Game</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="container">
+        <div id="ui">
+            <h1>3D Chess</h1>
+            <div id="game-info">
+                <div id="turn-indicator">
+                    <span>Beurt: </span>
+                    <span id="current-turn">Wit</span>
+                </div>
+                <div id="status">Kies een stuk om te bewegen</div>
+            </div>
+            <div id="controls">
+                <button id="reset-btn">Nieuw Spel</button>
+            </div>
+        </div>
+        <div id="canvas-container"></div>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.13.4/chess.min.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
+
