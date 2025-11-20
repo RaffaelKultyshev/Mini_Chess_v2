@@ -1,357 +1,348 @@
-// Initialize Three.js scene
-let scene, camera, renderer, chessBoard, chessPieces = [];
+// Game State
+let scene, camera, renderer, controls;
+let chessBoard, chessPieces = [];
 let selectedPiece = null;
-let chess = new Chess();
+let chess;
 let raycaster, mouse;
+let isAiThinking = false;
 
-// Colors
-const LIGHT_SQUARE = 0xf0d9b5;
-const DARK_SQUARE = 0xb58863;
-const SELECTED_COLOR = 0x4ade80;
-const HIGHLIGHT_COLOR = 0x60a5fa;
+// Configuration
+const SQUARE_SIZE = 1;
+const BOARD_OFFSET = 3.5;
+const COLORS = {
+    LIGHT: 0xf0d9b5,
+    DARK: 0xb58863,
+    SELECTED: 0x4ade80,
+    HIGHLIGHT: 0x60a5fa,
+    WHITE_PIECE: 0xffffff,
+    BLACK_PIECE: 0x333333
+};
 
-// Initialize the game
+// Initialize
+window.onload = function() {
+    try {
+        init();
+    } catch (e) {
+        console.error("Init error:", e);
+        document.getElementById('status').textContent = "Fout bij laden: " + e.message;
+    }
+};
+
 function init() {
+    // Initialize Chess logic
+    chess = new Chess();
+
     // Scene setup
     scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x1a1a2e);
+    scene.background = new THREE.Color(0x2c3e50); // Darker background
     
-    // Camera setup
-    camera = new THREE.PerspectiveCamera(
-        75,
-        window.innerWidth / window.innerHeight,
-        0.1,
-        1000
-    );
-    camera.position.set(0, 8, 8);
+    // Camera
+    const container = document.getElementById('canvas-container');
+    camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 1000);
+    camera.position.set(0, 10, 10);
     camera.lookAt(0, 0, 0);
     
-    // Renderer setup
-    const container = document.getElementById('canvas-container');
+    // Renderer
     renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(container.clientWidth, container.clientHeight);
     renderer.shadowMap.enabled = true;
     container.appendChild(renderer.domElement);
     
+    // Controls
+    if (typeof THREE.OrbitControls !== 'undefined') {
+        controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.maxPolarAngle = Math.PI / 2.2; // Prevent going below board
+        controls.minDistance = 5;
+        controls.maxDistance = 20;
+    }
+
     // Lighting
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
     scene.add(ambientLight);
     
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    directionalLight.position.set(5, 10, 5);
-    directionalLight.castShadow = true;
-    scene.add(directionalLight);
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    dirLight.position.set(5, 10, 5);
+    dirLight.castShadow = true;
+    dirLight.shadow.mapSize.width = 2048;
+    dirLight.shadow.mapSize.height = 2048;
+    scene.add(dirLight);
     
-    // Raycaster for mouse picking
+    // Helpers
     raycaster = new THREE.Raycaster();
     mouse = new THREE.Vector2();
     
-    // Create chess board
-    createChessBoard();
+    // Build Game
+    createBoard();
+    loadPieces();
     
-    // Create chess pieces
-    createChessPieces();
-    
-    // Event listeners
+    // Events
     window.addEventListener('resize', onWindowResize);
-    renderer.domElement.addEventListener('click', onMouseClick);
     renderer.domElement.addEventListener('mousemove', onMouseMove);
-    
-    // Reset button
+    renderer.domElement.addEventListener('click', onMouseClick);
     document.getElementById('reset-btn').addEventListener('click', resetGame);
     
-    // Start animation loop
+    // Start loop
     animate();
-    updateUI();
+    updateStatus("Wit aan zet (Jij)");
 }
 
-function createChessBoard() {
+function createBoard() {
     chessBoard = new THREE.Group();
+    
+    const geometry = new THREE.BoxGeometry(SQUARE_SIZE, 0.1, SQUARE_SIZE);
     
     for (let row = 0; row < 8; row++) {
         for (let col = 0; col < 8; col++) {
             const isLight = (row + col) % 2 === 0;
-            const color = isLight ? LIGHT_SQUARE : DARK_SQUARE;
+            const material = new THREE.MeshStandardMaterial({
+                color: isLight ? COLORS.LIGHT : COLORS.DARK,
+                roughness: 0.5,
+                metalness: 0.1
+            });
             
-            const geometry = new THREE.BoxGeometry(1, 0.1, 1);
-            const material = new THREE.MeshStandardMaterial({ color });
             const square = new THREE.Mesh(geometry, material);
-            
-            square.position.set(col - 3.5, 0, row - 3.5);
+            square.position.set(col - BOARD_OFFSET, 0, row - BOARD_OFFSET);
             square.receiveShadow = true;
-            square.userData = { row, col, isLight };
+            square.userData = { isSquare: true, row, col };
             
             chessBoard.add(square);
         }
     }
     
+    // Board border
+    const borderGeo = new THREE.BoxGeometry(8.4, 0.05, 8.4);
+    const borderMat = new THREE.MeshStandardMaterial({ color: 0x5c4033 });
+    const border = new THREE.Mesh(borderGeo, borderMat);
+    border.position.y = -0.05;
+    chessBoard.add(border);
+    
     scene.add(chessBoard);
 }
 
-function createChessPieces() {
-    const pieceGeometry = new THREE.CylinderGeometry(0.3, 0.3, 0.6, 16);
-    const piecePositions = [
-        // White pieces
-        { type: 'r', pos: [0, 0], color: 0xffffff },
-        { type: 'n', pos: [1, 0], color: 0xffffff },
-        { type: 'b', pos: [2, 0], color: 0xffffff },
-        { type: 'q', pos: [3, 0], color: 0xffffff },
-        { type: 'k', pos: [4, 0], color: 0xffffff },
-        { type: 'b', pos: [5, 0], color: 0xffffff },
-        { type: 'n', pos: [6, 0], color: 0xffffff },
-        { type: 'r', pos: [7, 0], color: 0xffffff },
-        // White pawns
-        ...Array.from({ length: 8 }, (_, i) => ({ type: 'p', pos: [i, 1], color: 0xffffff })),
-        // Black pawns
-        ...Array.from({ length: 8 }, (_, i) => ({ type: 'p', pos: [i, 6], color: 0x333333 })),
-        // Black pieces
-        { type: 'r', pos: [0, 7], color: 0x333333 },
-        { type: 'n', pos: [1, 7], color: 0x333333 },
-        { type: 'b', pos: [2, 7], color: 0x333333 },
-        { type: 'q', pos: [3, 7], color: 0x333333 },
-        { type: 'k', pos: [4, 7], color: 0x333333 },
-        { type: 'b', pos: [5, 7], color: 0x333333 },
-        { type: 'n', pos: [6, 7], color: 0x333333 },
-        { type: 'r', pos: [7, 7], color: 0x333333 },
-    ];
+function loadPieces() {
+    // Clear existing pieces
+    chessPieces.forEach(p => scene.remove(p));
+    chessPieces = [];
     
-    piecePositions.forEach(({ type, pos, color }) => {
-        const material = new THREE.MeshStandardMaterial({ color });
-        const piece = new THREE.Mesh(pieceGeometry, material);
-        
-        const [col, row] = pos;
-        piece.position.set(col - 3.5, 0.4, row - 3.5);
-        piece.castShadow = true;
-        piece.userData = { 
-            type, 
-            row, 
-            col, 
-            color: color === 0xffffff ? 'w' : 'b',
-            originalColor: color
-        };
-        
-        chessPieces.push(piece);
-        scene.add(piece);
+    const board = chess.board();
+    
+    for (let row = 0; row < 8; row++) {
+        for (let col = 0; col < 8; col++) {
+            const piece = board[row][col];
+            if (piece) {
+                createPieceMesh(piece.type, piece.color, row, col);
+            }
+        }
+    }
+}
+
+function createPieceMesh(type, color, row, col) {
+    let geometry;
+    // Simplified geometries for different pieces
+    switch(type) {
+        case 'p': geometry = new THREE.CylinderGeometry(0.2, 0.25, 0.6, 16); break;
+        case 'r': geometry = new THREE.BoxGeometry(0.4, 0.8, 0.4); break;
+        case 'n': geometry = new THREE.ConeGeometry(0.25, 0.8, 16); break;
+        case 'b': geometry = new THREE.CylinderGeometry(0.1, 0.3, 0.9, 16); break;
+        case 'q': geometry = new THREE.CylinderGeometry(0.3, 0.2, 1.1, 6); break;
+        case 'k': geometry = new THREE.CylinderGeometry(0.3, 0.2, 1.2, 8); break;
+        default: geometry = new THREE.BoxGeometry(0.4, 0.4, 0.4);
+    }
+    
+    const material = new THREE.MeshStandardMaterial({
+        color: color === 'w' ? COLORS.WHITE_PIECE : COLORS.BLACK_PIECE,
+        roughness: 0.3,
+        metalness: 0.2
     });
-}
-
-function getSquareFromPosition(x, z) {
-    const col = Math.round(x + 3.5);
-    const row = Math.round(z + 3.5);
-    return { row, col };
-}
-
-function getPieceAtSquare(row, col) {
-    return chessPieces.find(piece => {
-        const piecePos = getSquareFromPosition(piece.position.x, piece.position.z);
-        return piecePos.row === row && piecePos.col === col;
-    });
-}
-
-function getSquareNotation(row, col) {
-    const files = 'abcdefgh';
-    return files[col] + (8 - row);
+    
+    const mesh = new THREE.Mesh(geometry, material);
+    
+    // Position conversion (Chess.js 0,0 is top-left (a8), Three.js needs mapping)
+    // Chess.js: row 0 = rank 8, row 7 = rank 1
+    // Three.js: we want rank 8 at z = -3.5, rank 1 at z = 3.5
+    
+    mesh.position.set(col - BOARD_OFFSET, 0.5, row - BOARD_OFFSET);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    
+    mesh.userData = {
+        isPiece: true,
+        type: type,
+        color: color,
+        square: String.fromCharCode(97 + col) + (8 - row)
+    };
+    
+    chessPieces.push(mesh);
+    scene.add(mesh);
 }
 
 function onMouseMove(event) {
     const rect = renderer.domElement.getBoundingClientRect();
     mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-    
-    raycaster.setFromCamera(mouse, camera);
-    const intersects = raycaster.intersectObjects(chessPieces);
-    
-    renderer.domElement.style.cursor = intersects.length > 0 ? 'pointer' : 'default';
 }
 
 function onMouseClick(event) {
-    const rect = renderer.domElement.getBoundingClientRect();
-    mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-    mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    if (isAiThinking || chess.game_over()) return;
     
     raycaster.setFromCamera(mouse, camera);
+    
+    // Check for piece selection
     const intersects = raycaster.intersectObjects(chessPieces);
     
     if (intersects.length > 0) {
-        const clickedPiece = intersects[0].object;
-        const piecePos = getSquareFromPosition(clickedPiece.position.x, clickedPiece.position.z);
-        const square = getSquareNotation(piecePos.row, piecePos.col);
-        
-        // Check if it's the current player's turn
-        const pieceColor = clickedPiece.userData.color;
-        const currentTurn = chess.turn() === 'w' ? 'w' : 'b';
-        
-        if (selectedPiece === null) {
-            if (pieceColor === currentTurn) {
-                selectedPiece = clickedPiece;
-                clickedPiece.material.color.setHex(SELECTED_COLOR);
-                highlightValidMoves(square);
-            }
-        } else {
-            if (clickedPiece === selectedPiece) {
-                // Deselect
-                deselectPiece();
-            } else if (pieceColor === currentTurn) {
-                // Select different piece
-                deselectPiece();
-                selectedPiece = clickedPiece;
-                clickedPiece.material.color.setHex(SELECTED_COLOR);
-                highlightValidMoves(square);
-            } else {
-                // Try to move
-                const fromSquare = getSquareFromPosition(selectedPiece.position.x, selectedPiece.position.z);
-                const from = getSquareNotation(fromSquare.row, fromSquare.col);
-                const to = square;
-                
-                tryMove(from, to);
-            }
+        const obj = intersects[0].object;
+        if (obj.userData.color === 'w') { // Only allow selecting white pieces
+            selectPiece(obj);
+            return;
+        } else if (selectedPiece && obj.userData.color === 'b') {
+            // Capture move
+            const move = {
+                from: selectedPiece.userData.square,
+                to: obj.userData.square,
+                promotion: 'q'
+            };
+            makeMove(move);
+            return;
         }
-    } else {
-        // Clicked on empty square
-        if (selectedPiece) {
-            const piecePos = getSquareFromPosition(selectedPiece.position.x, selectedPiece.position.z);
-            const from = getSquareNotation(piecePos.row, piecePos.col);
-            
-            // Raycast to board to get target square
-            const boardIntersects = raycaster.intersectObjects(chessBoard.children);
-            if (boardIntersects.length > 0) {
-                const targetSquare = boardIntersects[0].object;
-                const targetPos = getSquareFromPosition(targetSquare.position.x, targetSquare.position.z);
-                const to = getSquareNotation(targetPos.row, targetPos.col);
-                
-                tryMove(from, to);
+    }
+    
+    // Check for square selection (move)
+    if (selectedPiece) {
+        const boardIntersects = raycaster.intersectObjects(chessBoard.children);
+        if (boardIntersects.length > 0) {
+            const square = boardIntersects[0].object;
+            if (square.userData.isSquare) {
+                const targetSquare = String.fromCharCode(97 + square.userData.col) + (8 - square.userData.row);
+                const move = {
+                    from: selectedPiece.userData.square,
+                    to: targetSquare,
+                    promotion: 'q'
+                };
+                makeMove(move);
             }
         }
     }
+}
+
+function selectPiece(mesh) {
+    // Reset previous selection
+    if (selectedPiece) {
+        selectedPiece.material.emissive.setHex(0x000000);
+        clearHighlights();
+    }
+    
+    selectedPiece = mesh;
+    selectedPiece.material.emissive.setHex(0x00ff00); // Green glow
+    selectedPiece.material.emissiveIntensity = 0.5;
+    
+    highlightValidMoves(selectedPiece.userData.square);
 }
 
 function highlightValidMoves(square) {
-    const moves = chess.moves({ square, verbose: true });
+    const moves = chess.moves({ square: square, verbose: true });
     
     moves.forEach(move => {
-        const targetRow = 8 - parseInt(move.to[1]);
-        const targetCol = move.to.charCodeAt(0) - 97;
-        const targetSquare = chessBoard.children.find(child => {
-            const pos = getSquareFromPosition(child.position.x, child.position.z);
-            return pos.row === targetRow && pos.col === targetCol;
-        });
+        const col = move.to.charCodeAt(0) - 97;
+        const row = 8 - parseInt(move.to[1]);
         
-        if (targetSquare) {
-            targetSquare.material.emissive.setHex(HIGHLIGHT_COLOR);
-            targetSquare.material.emissiveIntensity = 0.3;
+        const boardSquare = chessBoard.children.find(c => 
+            c.userData.row === row && c.userData.col === col
+        );
+        
+        if (boardSquare) {
+            boardSquare.material.emissive.setHex(COLORS.HIGHLIGHT);
+            boardSquare.material.emissiveIntensity = 0.5;
         }
     });
 }
 
-function deselectPiece() {
-    if (selectedPiece) {
-        selectedPiece.material.color.setHex(selectedPiece.userData.originalColor);
-        selectedPiece = null;
-        
-        // Remove highlights
-        chessBoard.children.forEach(square => {
-            square.material.emissive.setHex(0x000000);
-            square.material.emissiveIntensity = 0;
-        });
-    }
+function clearHighlights() {
+    chessBoard.children.forEach(child => {
+        if (child.userData.isSquare) {
+            child.material.emissive.setHex(0x000000);
+        }
+    });
 }
 
-function tryMove(from, to) {
-    const move = chess.move({
-        from,
-        to,
-        promotion: 'q' // Auto-promote to queen
-    });
+function makeMove(moveObj) {
+    const move = chess.move(moveObj);
     
     if (move) {
-        // Move piece in 3D
-        const piece = selectedPiece;
-        const targetRow = 8 - parseInt(to[1]);
-        const targetCol = to.charCodeAt(0) - 97;
+        // Valid move
+        loadPieces(); // Re-render board
+        selectedPiece = null;
+        clearHighlights();
         
-        // Animate piece movement
-        animatePieceMove(piece, targetCol - 3.5, targetRow - 3.5);
+        updateStatus();
         
-        // Remove captured piece if any
-        if (move.captured) {
-            const capturedPiece = getPieceAtSquare(targetRow, targetCol);
-            if (capturedPiece && capturedPiece !== piece) {
-                scene.remove(capturedPiece);
-                chessPieces = chessPieces.filter(p => p !== capturedPiece);
-            }
-        }
-        
-        deselectPiece();
-        updateUI();
-        
-        // Check for game end
-        if (chess.isCheckmate()) {
-            document.getElementById('status').textContent = 'Schaakmat! ' + (chess.turn() === 'w' ? 'Zwart' : 'Wit') + ' wint!';
-        } else if (chess.isDraw()) {
-            document.getElementById('status').textContent = 'Gelijkspel!';
-        } else if (chess.isCheck()) {
-            document.getElementById('status').textContent = 'Schaak!';
+        if (!chess.game_over()) {
+            // AI Turn
+            isAiThinking = true;
+            document.getElementById('ai-status').textContent = "Computer denkt na...";
+            setTimeout(makeAiMove, 500);
         }
     } else {
-        document.getElementById('status').textContent = 'Ongeldige zet!';
+        // Invalid move
+        console.log("Invalid move");
     }
 }
 
-function animatePieceMove(piece, targetX, targetZ) {
-    const startX = piece.position.x;
-    const startZ = piece.position.z;
-    const duration = 500; // milliseconds
-    const startTime = Date.now();
+function makeAiMove() {
+    if (chess.game_over()) return;
     
-    function animate() {
-        const elapsed = Date.now() - startTime;
-        const progress = Math.min(elapsed / duration, 1);
+    // Simple AI: Random valid move for now (can be upgraded to minimax)
+    const moves = chess.moves();
+    
+    if (moves.length > 0) {
+        // Try to find a capture or check
+        const aggressiveMoves = moves.filter(m => m.includes('x') || m.includes('+'));
+        const randomMove = aggressiveMoves.length > 0 
+            ? aggressiveMoves[Math.floor(Math.random() * aggressiveMoves.length)]
+            : moves[Math.floor(Math.random() * moves.length)];
+            
+        chess.move(randomMove);
+        loadPieces();
         
-        // Easing function
-        const ease = progress < 0.5 
-            ? 2 * progress * progress 
-            : 1 - Math.pow(-2 * progress + 2, 2) / 2;
-        
-        piece.position.x = startX + (targetX - startX) * ease;
-        piece.position.z = startZ + (targetZ - startZ) * ease;
-        piece.position.y = 0.4 + Math.sin(progress * Math.PI) * 0.3;
-        
-        if (progress < 1) {
-            requestAnimationFrame(animate);
-        } else {
-            piece.position.y = 0.4;
-        }
+        isAiThinking = false;
+        document.getElementById('ai-status').textContent = "";
+        updateStatus();
     }
-    
-    animate();
 }
 
-function updateUI() {
-    const turn = chess.turn() === 'w' ? 'Wit' : 'Zwart';
-    document.getElementById('current-turn').textContent = turn;
+function updateStatus(msg) {
+    if (msg) {
+        document.getElementById('status').textContent = msg;
+        return;
+    }
     
-    if (!chess.isCheckmate() && !chess.isDraw()) {
-        if (chess.isCheck()) {
-            document.getElementById('status').textContent = 'Schaak!';
-        } else {
-            document.getElementById('status').textContent = 'Kies een stuk om te bewegen';
+    let status = '';
+    const moveColor = chess.turn() === 'w' ? 'Wit' : 'Zwart';
+    
+    if (chess.in_checkmate()) {
+        status = `Game over, ${moveColor} is schaakmat.`;
+    } else if (chess.in_draw()) {
+        status = 'Gelijkspel!';
+    } else {
+        status = `${moveColor} aan zet`;
+        if (chess.in_check()) {
+            status += ' (Schaak!)';
         }
     }
+    
+    document.getElementById('status').textContent = status;
+    document.getElementById('current-turn').textContent = moveColor === 'Wit' ? 'Wit (Jij)' : 'Zwart (Computer)';
 }
 
 function resetGame() {
     chess.reset();
-    deselectPiece();
-    
-    // Remove all pieces
-    chessPieces.forEach(piece => scene.remove(piece));
-    chessPieces = [];
-    
-    // Recreate pieces
-    createChessPieces();
-    
-    updateUI();
-    document.getElementById('status').textContent = 'Nieuw spel gestart!';
+    loadPieces();
+    selectedPiece = null;
+    clearHighlights();
+    isAiThinking = false;
+    updateStatus("Nieuw spel. Wit aan zet.");
 }
 
 function onWindowResize() {
@@ -363,16 +354,6 @@ function onWindowResize() {
 
 function animate() {
     requestAnimationFrame(animate);
-    
-    // Rotate camera slightly for better view
-    const time = Date.now() * 0.0001;
-    camera.position.x = Math.sin(time * 0.5) * 2;
-    camera.position.z = 8 + Math.cos(time * 0.5) * 2;
-    camera.lookAt(0, 0, 0);
-    
+    if (controls) controls.update();
     renderer.render(scene, camera);
 }
-
-// Start the game when page loads
-init();
-
